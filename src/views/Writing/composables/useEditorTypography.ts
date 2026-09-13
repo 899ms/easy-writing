@@ -1,4 +1,6 @@
-import { computed, nextTick, onMounted, ref, watch, type Ref } from 'vue'
+import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch, type Ref } from 'vue'
+import { ElMessage } from 'element-plus'
+import { loadImportedFont } from '@/composables/use-imported-fonts'
 
 interface EditorTypographyOptions {
   fontFamily: Ref<string>
@@ -110,6 +112,13 @@ export const useEditorTypography = (options: EditorTypographyOptions) => {
     { immediate: true, flush: 'post' },
   )
 
+  watch(fontFamily, (family) => {
+    void loadImportedFont(family).then(scheduleLineHeightMeasure).catch((error) => {
+      console.warn('加载导入字体失败', error)
+      ElMessage.warning('字体加载失败，请重新导入该字体')
+    })
+  }, { immediate: true })
+
   // 计算编辑器区域宽度
   const editorAreaStyle = computed(() => ({
     maxWidth: `${contentWidth.value}%`,
@@ -126,6 +135,12 @@ export const useEditorTypography = (options: EditorTypographyOptions) => {
   onMounted(() => {
     scheduleLineHeightMeasure()
     void document.fonts?.ready.then(scheduleLineHeightMeasure)
+    // 内置字体首次被选中才开始加载，完成后同步重测行高与光标度量。
+    document.fonts?.addEventListener('loadingdone', scheduleLineHeightMeasure)
+  })
+
+  onBeforeUnmount(() => {
+    document.fonts?.removeEventListener('loadingdone', scheduleLineHeightMeasure)
   })
 
   return {

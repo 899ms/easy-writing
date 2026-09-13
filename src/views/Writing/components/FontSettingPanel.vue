@@ -6,17 +6,29 @@
       <span class="setting-label">字体</span>
       <div class="setting-controls">
         <el-select
+          ref="fontSelect"
           v-model="fontFamily"
           class="ink-select"
+          fit-input-width
           :teleported="true"
           popper-class="ink-select-popper"
         >
           <el-option :value="defaultFamily" label="默认" />
+          <el-option :value="WENKAI_FONT_FAMILY" label="霞鹜文楷" />
           <el-option value="KaiTi, STKaiti, KaiTi_GB2312, serif" label="楷体" />
           <el-option value="SimSun, Songti SC, serif" label="宋体" />
           <el-option value="SimHei, Source Han Sans SC, Microsoft YaHei, sans-serif" label="黑体" />
           <el-option value="Arial, Helvetica, sans-serif" label="Arial" />
           <el-option value="Times New Roman, Times, serif" label="Times" />
+          <el-option
+            v-for="font in importedFonts"
+            :key="font.id"
+            :value="font.value"
+            :label="font.name"
+          />
+          <template #footer>
+            <FontImportButton @click="openFontImport" />
+          </template>
         </el-select>
         <button
           class="icon-btn"
@@ -132,11 +144,17 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
+import type { SelectInstance } from 'element-plus'
+import { WENKAI_FONT_FAMILY } from '@/config/editor-fonts'
+import { importedFonts } from '@/composables/use-imported-fonts'
+import FontImportButton from '@/components/FontImportButton.vue'
 import { useWritingEditorStore } from '@/stores/writing-editor'
 import { storeToRefs } from 'pinia'
 
 const editorStore = useWritingEditorStore()
+const emit = defineEmits<{ 'import-font': [] }>()
+const fontSelect = ref<SelectInstance>()
 
 const defaultFamily = 'system-ui, -apple-system, Segoe UI, Roboto, Noto Sans, Arial, PingFang SC, Microsoft YaHei'
 
@@ -148,6 +166,11 @@ const fontFamily = computed({
   get: () => editorStore.fontFamily,
   set: (val: string) => editorStore.setFontFamily(val)
 })
+
+const openFontImport = () => {
+  fontSelect.value?.blur()
+  emit('import-font')
+}
 
 // 字体颜色需要特殊处理（可能为空）
 const fontColor = computed({

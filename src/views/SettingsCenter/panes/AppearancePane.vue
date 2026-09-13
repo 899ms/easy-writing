@@ -23,8 +23,11 @@
               <div class="number-title"><span>2</span><strong>阅读与排版</strong></div>
               <div class="appearance-form-grid">
                 <div class="settings-card thin">
-                  <span class="setting-label">字体选择</span>
-                  <div class="option-row three">
+                  <div class="font-choice-heading">
+                    <span class="setting-label">字体选择</span>
+                    <FontImportButton @click="showFontImport = true" />
+                  </div>
+                  <div class="option-row four">
                     <button
                       v-for="item in fontOptions"
                       :key="item.value"
@@ -36,6 +39,17 @@
                       {{ item.label }}
                     </button>
                   </div>
+                  <el-select
+                    v-if="importedFonts.length"
+                    v-model="selectedImportedFont"
+                    class="imported-font-select"
+                    popper-class="settings-select-popper"
+                    placeholder="已导入字体"
+                    aria-label="已导入字体"
+                    fit-input-width
+                  >
+                    <el-option v-for="font in importedFonts" :key="font.id" :value="font.value" :label="font.name" />
+                  </el-select>
                 </div>
                 <div class="settings-card thin">
                   <span class="setting-label">字号</span>
@@ -86,22 +100,39 @@
                 </div>
               </div>
             </section>
+            <FontImportModal
+              v-if="showFontImport"
+              v-model:visible="showFontImport"
+              @imported="editorDraft.fontFamily = $event"
+            />
           </section>
 </template>
 
 <script setup lang="ts">
+import { computed, ref } from 'vue'
+import FontImportButton from '@/components/FontImportButton.vue'
+import FontImportModal from '@/components/FontImportModal.vue'
+import { importedFonts } from '@/composables/use-imported-fonts'
 import { useThemeStore } from '@/stores/theme'
+import { WENKAI_FONT_FAMILY } from '@/config/editor-fonts'
 import type { SettingsOption } from '@/types/settings-center'
 import { useSettingsCenterCtx } from '../settings-context'
 
 const ctx = useSettingsCenterCtx()
 const { editorDraft, selectedTheme } = ctx
 const themeStore = useThemeStore()
+const showFontImport = ref(false)
+
+const selectedImportedFont = computed({
+  get: () => importedFonts.value.some((font) => font.value === editorDraft.fontFamily) ? editorDraft.fontFamily : '',
+  set: (value: string) => { editorDraft.fontFamily = value },
+})
 
 const fontOptions: Array<SettingsOption> = [
   { label: '思源宋体', value: '"Noto Serif SC", "Songti SC", SimSun, serif' },
   { label: '系统黑体', value: 'system-ui, -apple-system, Segoe UI, Roboto, Noto Sans, Arial, PingFang SC, Microsoft YaHei' },
   { label: '仿宋', value: 'FangSong, STFangsong, "Noto Serif SC", serif' },
+  { label: '霞鹜文楷', value: WENKAI_FONT_FAMILY },
 ]
 
 const contentWidthOptions = [
@@ -123,3 +154,17 @@ const getThemeDescription = (theme: string) => {
   return '清爽通透，专注创作'
 }
 </script>
+
+<style scoped lang="scss">
+.font-choice-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 9px;
+
+  .setting-label { margin-bottom: 0; }
+}
+
+.imported-font-select { margin-top: 10px; }
+</style>

@@ -26,7 +26,7 @@
                 </button>
               </el-tooltip>
             </template>
-            <FontSettingPanel />
+            <FontSettingPanel @import-font="openFontImport" />
           </SmartPopover>
           <el-dropdown @command="handleThemeChange" trigger="click">
             <div class="dropdown-trigger">
@@ -239,7 +239,7 @@
 
           <Teleport to="body">
             <div
-              v-if="bubbleMenuAllowed && quickPolishToolbarEnabled && isBubbleMenuVisible && editor"
+              v-if="!showFontImport && bubbleMenuAllowed && quickPolishToolbarEnabled && isBubbleMenuVisible && editor"
               ref="bubbleMenuRef"
               class="custom-bubble-menu"
               :class="{ 'is-visible': isBubbleMenuAnimating }"
@@ -423,6 +423,13 @@
       :read-only="workflowLocked"
     />
 
+    <!-- 字体导入弹窗独立于下拉面板，关闭下拉面板不会卸载导入表单。 -->
+    <FontImportModal
+      v-if="showFontImport"
+      v-model:visible="showFontImport"
+      @imported="editorStore.setFontFamily"
+    />
+
     <!-- 取名弹窗 -->
     <NameGeneratorModal
       v-if="!workflowMode && !workflowLocked"
@@ -601,6 +608,7 @@ import EditorBubbleMenu from './EditorBubbleMenu.vue'
 import AiReviewWidget from './AiReviewWidget.vue'
 import SmartPopover from '@/components/SmartPopover.vue'
 import FontSettingPanel from './FontSettingPanel.vue'
+import FontImportModal from '@/components/FontImportModal.vue'
 import PreferenceSettingPanel from './PreferenceSettingPanel.vue'
 import FindReplaceModal from './FindReplaceModal.vue'
 import NameGeneratorModal from './NameGeneratorModal.vue'
@@ -1344,6 +1352,11 @@ watch(
 
 // 字体/偏好面板（SmartPopover）：新手引导"展开面板演示"需要程序化开合
 const fontPopoverRef = ref<InstanceType<typeof SmartPopover> | null>(null)
+const showFontImport = ref(false)
+const openFontImport = () => {
+  fontPopoverRef.value?.hide()
+  showFontImport.value = true
+}
 const prefPopoverRef = ref<InstanceType<typeof SmartPopover> | null>(null)
 const bubbleMenuMode = computed(() =>
   editorStore.rightPanelActiveTool === 'timeline' ||
