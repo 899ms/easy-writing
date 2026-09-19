@@ -475,6 +475,10 @@ watch(
   }
 )
 
+watch(() => route.query.restored, (value) => {
+  if (value) void refreshBooks()
+})
+
 // 方法
 const getTagType = (type: string): 'primary' | 'success' | 'warning' | 'info' | 'danger' => {
   return CATEGORY_TAG_MAP[type] || 'info'

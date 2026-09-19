@@ -54,14 +54,42 @@
                   <i v-else class="fa-solid fa-cloud-arrow-up"></i>
                   立即备份
                 </button>
+                <button class="ink-btn ink-btn-outline" type="button" :disabled="!desktopSupported || loading || backingUp" @click="restoreVisible = true">
+                  <i class="fa-solid fa-clock-rotate-left"></i> 恢复备份
+                </button>
               </div>
               <p v-if="backupError" class="error-line">{{ backupError }}</p>
             </section>
+            <section class="settings-card full-backup-card">
+              <div class="settings-card-title">
+                <i class="fa-solid fa-box-archive"></i>
+                <strong>一键备份与恢复</strong>
+              </div>
+              <p class="hint-line">把本机的全部内容打成一个 .zip 文件：作品与正文、章节版本历史、参考资料、提示词库、模型配置（含 API Key）、界面与写作设置、码字统计、导入的字体。</p>
+              <p class="hint-line">恢复时可选“完整覆盖”或“合并到现有数据”。备份文件含明文 API Key，请妥善保管。</p>
+              <div class="action-row">
+                <button class="ink-btn ink-btn-primary" type="button" :disabled="!desktopSupported || loading || fullBackingUp" @click="backupEverything">
+                  <i v-if="fullBackingUp" class="fa-solid fa-spinner fa-spin"></i>
+                  <i v-else class="fa-solid fa-file-zipper"></i>
+                  {{ fullBackingUp ? (fullProgress || '备份中…') : '一键备份' }}
+                </button>
+                <button class="ink-btn ink-btn-outline" type="button" :disabled="!desktopSupported || loading || fullBackingUp" @click="fullRestoreVisible = true">
+                  <i class="fa-solid fa-rotate-left"></i> 一键恢复
+                </button>
+              </div>
+              <p v-if="fullBackupError" class="error-line">{{ fullBackupError }}</p>
+            </section>
+            <BackupRestoreModal v-if="restoreVisible" v-model:visible="restoreVisible" @view-books="viewRestoredBooks" />
+            <FullBackupRestoreModal v-if="fullRestoreVisible" v-model:visible="fullRestoreVisible" />
           </section>
 </template>
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useRouter } from 'vue-router'
+import BackupRestoreModal from '@/components/BackupRestoreModal.vue'
+import FullBackupRestoreModal from '@/components/FullBackupRestoreModal.vue'
+import { buildFullBackupFileName, createFullBackup } from '@/storage/full-backup'
 import { ElMessage } from 'element-plus'
 import { getLocalBackupService } from '@/storage/local-backup-service'
 import { formatLocaleDateTime } from '@/utils/format'
@@ -71,9 +99,56 @@ const ctx = useSettingsCenterCtx()
 const { settingsDraft, loading } = ctx
 const desktopSupported = ctx.desktopSupported
 const backupService = getLocalBackupService()
+const router = useRouter()
+const restoreVisible = ref(false)
+const viewRestoredBooks = async () => {
+  restoreVisible.value = false
+  ctx.close()
+  await router.push({ path: '/myBooks', query: { restored: String(Date.now()) } })
+}
 
 const backingUp = ref(false)
 const backupError = ref('')
+
+const fullRestoreVisible = ref(false)
+const fullBackingUp = ref(false)
+const fullProgress = ref('')
+const fullBackupError = ref('')
+
+const backupEverything = async () => {
+  if (fullBackingUp.value) return
+  fullBackupError.value = ''
+  const { save } = await import('@tauri-apps/plugin-dialog')
+  const { join } = await import('@tauri-apps/api/path')
+  const defaultDir = settingsDraft.value.backupDir || (await backupService.getDefaultBackupDir())
+  const target = await save({
+    title: '保存一键备份',
+    defaultPath: defaultDir ? await join(defaultDir, buildFullBackupFileName()) : buildFullBackupFileName(),
+    filters: [{ name: '易创备份', extensions: ['zip'] }],
+  })
+  if (!target) return
+  fullBackingUp.value = true
+  fullProgress.value = ''
+  try {
+    // 先让打开中的编辑器把正文落盘，备份里才是最新内容
+    const snapshotted = await backupService.snapshotActiveWritingEditor()
+    if (!snapshotted) {
+      fullBackupError.value = '当前章节保存到本地失败，未执行一键备份'
+      return
+    }
+    const summary = await createFullBackup(target, text => {
+      fullProgress.value = text
+    })
+    settingsDraft.value = await backupService.saveSettings({ ...settingsDraft.value, lastBackupAt: Date.now() })
+    ElMessage.success(`已备份到 ${summary.path}（${(summary.bytes / 1024 / 1024).toFixed(1)} MB）`)
+  } catch (error) {
+    console.error('full backup failed', error)
+    fullBackupError.value = error instanceof Error ? error.message : '一键备份失败'
+  } finally {
+    fullBackingUp.value = false
+    fullProgress.value = ''
+  }
+}
 
 const canBackupNow = computed(() =>
   Boolean(desktopSupported && settingsDraft.value.backupEnabled && !loading.value && !backingUp.value)

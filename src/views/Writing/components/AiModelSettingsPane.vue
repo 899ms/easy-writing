@@ -367,9 +367,19 @@
               <td class="mono-cell" :title="model.modelCode || model.code">{{ model.modelCode || model.code }}</td>
               <td>{{ sceneLabels[model.scene] || model.scene }}</td>
               <td>
-                <span class="status-pill" :class="model.status === 1 ? 'enabled' : 'disabled'">
-                  {{ model.status === 1 ? '启用' : '禁用' }}
-                </span>
+                <!-- 状态列直接可切，不用再去操作列找"禁用/启用" -->
+                <el-switch
+                  class="row-status-switch"
+                  size="small"
+                  :model-value="model.status === 1"
+                  :loading="togglingRowId === model.id"
+                  :disabled="togglingRowId === model.id"
+                  :aria-label="model.status === 1 ? '禁用该模型' : '启用该模型'"
+                  active-text="启用"
+                  inactive-text="禁用"
+                  inline-prompt
+                  @change="toggleStatus(model)"
+                />
               </td>
               <td>
                 <span class="status-pill" :class="getTestClass(model.testStatus)">
@@ -377,9 +387,10 @@
                 </span>
                 <small v-if="model.lastLatency">{{ model.lastLatency }}ms</small>
               </td>
-              <td class="url-cell" :title="model.baseUrl || ''">
-                {{ model.baseUrl || '-' }}
-                <small v-if="model.lastError" class="error-text">{{ model.lastError }}</small>
+              <td class="url-cell">
+                <span class="url-text" :title="model.baseUrl || ''">{{ model.baseUrl || '-' }}</span>
+                <!-- 报错单独挂 title：单元格被 nowrap 截断，悬浮时要能看到完整错误而不是外层的地址 -->
+                <small v-if="model.lastError" class="error-text" :title="model.lastError">{{ model.lastError }}</small>
               </td>
               <td>
                 <div class="row-actions">
@@ -412,6 +423,7 @@ import type { AiModelGroupCode, AiModelOption } from '@/types/ai-model'
 import {
   deleteLocalAiModel as deleteUserAiModelApi,
   listLocalAiModels as getUserAiModelsApi,
+  recordLocalAiModelTest,
   saveLocalAiModel as saveUserAiModelApi,
   setLocalAiModelStatus as setUserAiModelStatusApi,
 } from '@/storage/local-ai-models'
@@ -456,7 +468,7 @@ const providerPresets: ProviderPreset[] = [
   { label: 'Gemini兼容', provider: 'gemini_openai', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', icon: 'G', iconSrc: '/provider-icons/gemini.svg', description: 'Google 兼容接口', maxContext: 1000000, maxOutputTokens: 65536, thinking: 'default' },
   { label: 'Claude', provider: 'claude', baseUrl: 'https://api.anthropic.com/v1', icon: 'C', iconSrc: '/provider-icons/claude.svg', description: 'Anthropic Claude 接口', maxContext: 200000, maxOutputTokens: 16384, thinking: 'default' },
   { label: 'xAI Grok', provider: 'xai', baseUrl: 'https://api.x.ai/v1', icon: 'X', iconSrc: '/provider-icons/xai.svg', description: 'xAI Grok 接口', maxContext: 131072, maxOutputTokens: 16384, thinking: 'default' },
-  { label: '本地部署', provider: 'local', baseUrl: 'http://127.0.0.1:11434/v1', icon: '家', description: 'Ollama / LM Studio 等本机服务，无需 API Key', maxContext: 32768, maxOutputTokens: 16384, thinking: 'off' },
+  { label: '本地部署', provider: 'local', baseUrl: 'http://127.0.0.1:11434/v1', icon: '家', iconSrc: '/provider-icons/local.svg', description: 'Ollama / LM Studio 等本机服务，无需 API Key', maxContext: 32768, maxOutputTokens: 16384, thinking: 'off' },
   { label: '自定义', provider: 'custom', baseUrl: '', icon: '+', description: '自定义兼容接口', maxContext: 128000, maxOutputTokens: 8192, thinking: 'default' },
 ]
 
@@ -479,6 +491,7 @@ const loading = ref(false)
 const saving = ref(false)
 const testingCurrent = ref(false)
 const testingRowId = ref<number | null>(null)
+const togglingRowId = ref<number | null>(null)
 const remoteModelLoading = ref(false)
 const remoteModelPanelVisible = ref(false)
 const modelCodeFieldRef = ref<HTMLElement | null>(null)
@@ -616,6 +629,16 @@ const saveModel = async () => {
   }
 }
 
+/** 测试结果写回本地库，否则列表"测试"列永远是未测试（旧服务端是在 test 接口里顺手更新的） */
+const persistTestResult = async (id: number | null | undefined, data: UserAiModelTestResult | null | undefined) => {
+  if (!id || !data) return
+  try {
+    await recordLocalAiModelTest(id, data)
+  } catch (error) {
+    console.warn('记录模型测试结果失败', error)
+  }
+}
+
 const testCurrentModel = async () => {
   if (!validateForm()) return
   testingCurrent.value = true
@@ -627,6 +650,7 @@ const testCurrentModel = async () => {
     } else {
       ElMessage.error(data?.message || '连接失败')
     }
+    await persistTestResult(editingId.value, data)
     await refreshModels()
   } catch (error) {
     showApiError(error, '连接测试失败')
@@ -645,6 +669,7 @@ const testRowModel = async (model: AiModelOption) => {
     } else {
       ElMessage.error(data?.message || '连接失败')
     }
+    await persistTestResult(model.id, data)
     await refreshModels()
   } catch (error) {
     showApiError(error, '连接测试失败')
@@ -711,12 +736,16 @@ const editModel = (model: AiModelOption) => {
 }
 
 const toggleStatus = async (model: AiModelOption) => {
+  if (togglingRowId.value === model.id) return
+  togglingRowId.value = model.id
   try {
     await setUserAiModelStatusApi(model.id, model.status === 1 ? 0 : 1)
     ElMessage.success(model.status === 1 ? '已禁用' : '已启用')
     await refreshModels()
   } catch (error) {
     showApiError(error, '状态更新失败')
+  } finally {
+    togglingRowId.value = null
   }
 }
 
@@ -1439,8 +1468,17 @@ const getTestClass = (status?: number) => {
   max-width: 160px;
 }
 
+.url-cell .url-text,
+.url-cell .error-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .error-text {
   color: var(--state-danger) !important;
+  cursor: help;
 }
 
 .status-pill {
@@ -1511,6 +1549,90 @@ const getTestClass = (status?: number) => {
 
 :deep(.el-input-number) {
   width: 100%;
+}
+
+// element-plus 的常规文字色被编译成固定灰（#57534e），暗夜下回显值和占位符几乎同色，
+// 这里把已填内容拉到主题正文色、占位符压到弱化色，两者拉开层次
+:deep(.el-input__inner),
+:deep(.el-select__selected-item:not(.el-select__placeholder)),
+:deep(.el-select__placeholder:not(.is-transparent)) {
+  color: var(--ink-main);
+}
+
+:deep(.el-input__inner::placeholder),
+:deep(.el-select__placeholder.is-transparent) {
+  color: var(--ink-muted);
+}
+
+// textarea 不走 .el-input__wrapper，element-plus 默认给的是编译期固定的白底灰边，暗夜主题下会突兀
+:deep(.el-textarea__inner) {
+  border-radius: 7px;
+  background: var(--input-bg);
+  color: var(--ink-main);
+  box-shadow: 0 0 0 1px var(--input-border) inset;
+
+  &::placeholder {
+    color: var(--ink-muted);
+  }
+
+  &:hover {
+    box-shadow: 0 0 0 1px var(--input-border) inset;
+  }
+
+  &:focus {
+    background: var(--input-focus-bg);
+    box-shadow: 0 0 0 1px var(--input-focus-border) inset;
+  }
+}
+
+// 启用/禁用开关：element-plus 主色被编译成固定墨黑，暗夜主题下轨道和背景混成一团，改走主题变量
+:deep(.el-switch) {
+  --el-switch-on-color: var(--ink-accent);
+  --el-switch-off-color: color-mix(in srgb, var(--ink-sec) 26%, var(--input-bg));
+  --el-color-primary: var(--ink-accent);
+  --el-text-color-primary: var(--ink-sec);
+  height: 24px;
+  line-height: 24px;
+}
+
+:deep(.el-switch__core) {
+  min-width: 42px;
+  height: 22px;
+  border-radius: 999px;
+}
+
+:deep(.el-switch__action) {
+  width: 18px;
+  height: 18px;
+  background-color: var(--on-inverse);
+}
+
+:deep(.el-switch__label) {
+  color: var(--ink-sec);
+}
+
+:deep(.el-switch__label.is-active) {
+  color: var(--ink-main);
+}
+
+// 列表里的状态开关：inline-prompt 把"启用/禁用"写进轨道，尺寸跟表格行高匹配
+:deep(.row-status-switch) {
+  height: 22px;
+  line-height: 22px;
+
+  .el-switch__core {
+    min-width: 52px;
+    height: 22px;
+  }
+
+  .el-switch__action {
+    width: 18px;
+    height: 18px;
+  }
+
+  .el-switch__inner {
+    font-size: 11px;
+  }
 }
 
 :global(.ai-model-select-popper .el-select-dropdown__item) {

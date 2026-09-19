@@ -58,6 +58,7 @@ export const normalizeLocalBook = (payload: Partial<LocalBook>): LocalBook => {
     mergedAt: payload.mergedAt || null,
     deletedAt: payload.deletedAt || null,
     ownerUserId: payload.ownerUserId == null ? null : String(payload.ownerUserId),
+    lastChapterId: payload.lastChapterId == null ? null : Number(payload.lastChapterId) || null,
   }
 }
 
@@ -203,7 +204,7 @@ const CN_DIGIT: Record<string, number> = { 零: 0, 一: 1, 二: 2, 两: 2, 三: 
 const CN_UNIT: Record<string, number> = { 十: 10, 百: 100, 千: 1000 }
 
 /** 卷/章序号转数字（一百零五 → 105）；解析不了返回 null */
-const parseTxtHeadingNo = (raw: string): number | null => {
+export const parseTxtHeadingNo = (raw: string): number | null => {
   const text = String(raw || '').trim()
   if (!text) return null
   if (/^\d+$/.test(text)) return Number(text)
@@ -242,33 +243,88 @@ const acceptTxtHeading = (match: RegExpMatchArray, lastNo: number): { pass: bool
   return { pass: true, no }
 }
 
-/** 优先按 BOM 解码；无 BOM 时先验证 UTF-8，再兼容 GBK/GB18030 中文文本。 */
+/** 可读字符占比：汉字、ASCII 可见字符、常见中英标点、换行制表算可读，用来给解码候选打分 */
+const readableRatio = (text: string): number => {
+  const sample = Array.from(text.slice(0, 8000))
+  if (!sample.length) return 0
+  let ok = 0
+  for (const ch of sample) {
+    const code = ch.codePointAt(0) ?? 0
+    if (
+      code === 0x09 || code === 0x0a || code === 0x0d
+      || (code >= 0x20 && code <= 0x7e)
+      || (code >= 0x2000 && code <= 0x206f)
+      || (code >= 0x3000 && code <= 0x303f)
+      || (code >= 0x4e00 && code <= 0x9fff)
+      || (code >= 0xff00 && code <= 0xffef)
+    ) ok++
+  }
+  return ok / sample.length
+}
+
+/** 去掉零字节和其它不可见控制字符（保留换行、回车、制表），这类字符常见于站点下载或软件导出的 TXT 尾部填充 */
+// eslint-disable-next-line no-control-regex
+const stripControlChars = (text: string): string => text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '')
+
+/** 无 BOM 的 UTF-16 兜底：两种字节序各试一次，挑出没有零字符且可读占比最高的那个 */
+const decodeBomlessUtf16 = (bytes: Uint8Array): string | null => {
+  let best: { text: string; score: number } | null = null
+  for (const encoding of ['utf-16le', 'utf-16be'] as const) {
+    let text: string
+    try {
+      text = new TextDecoder(encoding, { fatal: true }).decode(bytes)
+    } catch {
+      continue
+    }
+    if (text.includes('\0')) continue
+    const score = readableRatio(text)
+    if (!best || score > best.score) best = { text, score }
+  }
+  return best && best.score >= 0.9 ? best.text : null
+}
+
+const tryDecode = (bytes: Uint8Array, encoding: string): string | null => {
+  try {
+    return new TextDecoder(encoding, { fatal: true }).decode(bytes)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 优先按 BOM 解码；无 BOM 时先验证 UTF-8，再兼容 GBK/GB18030 中文文本，
+ * 两者都不行或解出零字符时再按无 BOM 的 UTF-16 试一次。
+ */
 const readLocalTxtContent = async (file: File): Promise<string> => {
   const bytes = new Uint8Array(await file.arrayBuffer())
-  let encoding: string | null = null
-  if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) encoding = 'utf-8'
-  else if (bytes[0] === 0xff && bytes[1] === 0xfe) encoding = 'utf-16le'
-  else if (bytes[0] === 0xfe && bytes[1] === 0xff) encoding = 'utf-16be'
+  let bomEncoding: string | null = null
+  if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) bomEncoding = 'utf-8'
+  else if (bytes[0] === 0xff && bytes[1] === 0xfe) bomEncoding = 'utf-16le'
+  else if (bytes[0] === 0xfe && bytes[1] === 0xff) bomEncoding = 'utf-16be'
 
-  let text: string
-  try {
-    if (encoding) {
-      text = new TextDecoder(encoding, { fatal: true }).decode(bytes)
-    } else {
-      try {
-        text = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
-      } catch {
-        text = new TextDecoder('gb18030', { fatal: true }).decode(bytes)
-      }
+  let text: string | null
+  if (bomEncoding) {
+    text = tryDecode(bytes, bomEncoding)
+  } else {
+    text = tryDecode(bytes, 'utf-8') ?? tryDecode(bytes, 'gb18030')
+    // 没有 BOM 的 UTF-16 文件：GB18030 要么直接解码失败，要么解成带零字符的乱码
+    if (text == null || text.includes('\0')) {
+      const utf16 = decodeBomlessUtf16(bytes)
+      if (utf16) return utf16
     }
-  } catch {
+  }
+  if (text == null) {
     throw new Error('无法正确读取 TXT 编码，请将原文件另存为 UTF-8 后重新导入')
   }
-  // 拒绝带空字符的内容，避免未标记编码的 UTF-16 或二进制文件被当作正文保存。
-  if (text.includes('\0')) {
+
+  // 正常文本里夹了零字节（下载站填充、软件导出残留）直接剔掉即可，不必让用户去转码；
+  // 剔掉的比例过半或剩下的不像文字，才当作损坏/二进制文件拒绝
+  const cleaned = stripControlChars(text)
+  const mostlyGarbage = cleaned.length < text.length * 0.5 || !cleaned.trim() || readableRatio(cleaned) < 0.6
+  if (text.includes('\0') && mostlyGarbage) {
     throw new Error('文件包含非文本字符，请将原文件另存为 UTF-8 格式的 TXT 后重新导入')
   }
-  return text
+  return cleaned
 }
 
 export const parseLocalTxtBook = async (file: File): Promise<LocalParsedBook> => {

@@ -529,7 +529,7 @@ onMounted(() => {
 
 .hero-badge:hover {
   transform: translateY(-1px);
-  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.08);
+  box-shadow: var(--ui-shadow);
 }
 
 .upload-card {
@@ -549,7 +549,7 @@ onMounted(() => {
 
 .upload-card.dragging {
   border-color: var(--ink-accent);
-  background: rgba(176, 105, 53, 0.08);
+  background: color-mix(in srgb, var(--ink-accent) 8%, transparent);
 }
 
 .file-input {
@@ -580,10 +580,10 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(176, 105, 53, 0.12);
+  background: color-mix(in srgb, var(--ink-accent) 12%, transparent);
   color: var(--ink-accent);
   font-size: 32px;
-  box-shadow: 0 10px 20px rgba(176, 105, 53, 0.12);
+  box-shadow: 0 10px 20px color-mix(in srgb, var(--ink-accent) 12%, transparent);
 }
 
 .upload-title {
@@ -650,7 +650,7 @@ onMounted(() => {
 
 .ink-bar-fill {
   height: 100%;
-  background: linear-gradient(90deg, var(--ink-accent), rgba(176, 105, 53, 0.4));
+  background: linear-gradient(90deg, var(--ink-accent), color-mix(in srgb, var(--ink-accent) 40%, transparent));
   border-radius: 999px;
   transition: width 0.25s ease-out;
 }
@@ -668,7 +668,7 @@ onMounted(() => {
   transition: all 0.3s ease;
   font-size: 12px;
   color: var(--ink-warning);
-  background: rgba(249, 115, 22, 0.12);
+  background: var(--state-warning-surface);
   padding: 8px 14px;
   border-radius: 8px;
 }
@@ -699,7 +699,7 @@ onMounted(() => {
   width: 110px;
   height: 110px;
   border-radius: 18px;
-  background: rgba(176, 105, 53, 0.12);
+  background: color-mix(in srgb, var(--ink-accent) 12%, transparent);
   color: var(--ink-accent);
   display: flex;
   align-items: center;
@@ -777,7 +777,7 @@ onMounted(() => {
   padding: 4px 10px;
   border-radius: 999px;
   color: var(--ink-accent);
-  background: rgba(176, 105, 53, 0.12);
+  background: color-mix(in srgb, var(--ink-accent) 12%, transparent);
 }
 
 .result-actions {
@@ -813,9 +813,6 @@ onMounted(() => {
 
 
 
-:global(.theme-dark .upload-card.dragging) {
-  background: rgba(202, 138, 4, 0.18);
-}
 
 
 
@@ -902,7 +899,7 @@ onMounted(() => {
   width: 46px;
   height: 46px;
   border-radius: 12px;
-  background: rgba(176, 105, 53, 0.12);
+  background: color-mix(in srgb, var(--ink-accent) 12%, transparent);
   color: var(--ink-accent);
   display: flex;
   align-items: center;
@@ -1001,8 +998,8 @@ onMounted(() => {
 
 .history-delete:hover {
   color: var(--ink-accent);
-  border-color: rgba(146, 64, 14, 0.25);
-  background: rgba(146, 64, 14, 0.08);
+  border-color: color-mix(in srgb, var(--ink-accent) 25%, transparent);
+  background: color-mix(in srgb, var(--ink-accent) 8%, transparent);
 }
 
 :global(.ink-confirm) {
@@ -1075,7 +1072,7 @@ onMounted(() => {
     margin: 0;
     font-size: 22px;
     color: var(--ink-main);
-    font-family: var(--font-serif);
+    font-family: var(--font-serif, inherit);
   }
 
   p {

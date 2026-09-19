@@ -29,6 +29,11 @@ export interface LocalAiModel {
   thinking?: AiThinkingMode
   /** 额外请求参数 JSON 文本 */
   extraParams?: string
+  /** 最近一次连通测试：1=已连接 2=失败，缺省=未测试 */
+  testStatus?: number
+  lastTestAt?: string
+  lastLatency?: number | null
+  lastError?: string
 }
 
 interface LocalAiModelStore {
@@ -90,6 +95,10 @@ const toOption = (model: LocalAiModel): AiModelOption => ({
   thinking: model.thinking || defaultThinkingFor(model.provider),
   extraParams: model.extraParams || '',
   status: model.status,
+  testStatus: model.testStatus,
+  lastTestAt: model.lastTestAt,
+  lastLatency: model.lastLatency,
+  lastError: model.lastError,
 })
 
 const sortModels = (models: LocalAiModel[]) =>
@@ -150,6 +159,22 @@ export const setLocalAiModelStatus = async (id: number, status: number) => {
   const model = store.models.find(item => item.id === id)
   if (!model) throw new Error('模型不存在')
   model.status = status
+  saveStore(store)
+  return { data: toOption(model) }
+}
+
+/** 记录连通测试结果，列表"测试"列据此显示已连接/失败（原服务端在 test 接口里顺手写回，本地版由调用方显式落库） */
+export const recordLocalAiModelTest = async (
+  id: number,
+  result: { ok: boolean; message?: string; latency?: number | null; testedAt?: string }
+) => {
+  const store = loadStore()
+  const model = store.models.find(item => item.id === id)
+  if (!model) throw new Error('模型不存在')
+  model.testStatus = result.ok ? 1 : 2
+  model.lastTestAt = result.testedAt || nowIso()
+  model.lastLatency = result.latency ?? null
+  model.lastError = result.ok ? '' : String(result.message || '')
   saveStore(store)
   return { data: toOption(model) }
 }

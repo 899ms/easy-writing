@@ -5,9 +5,11 @@ import type { WordCountMode } from '@/types/ui-preferences'
 /**
  * 本地码字统计：替代旧服务端 /writing/statistics 三接口的数据源。
  *
- * 记账方式：写作台每次落盘章节时上报该章最新字数，这里与上一次基线求差，
- * 正向增量记入「当天 × 书」的账本（净增口径：删 100 再写 100 会记 100）。
- * 章节首次见到时只建基线不记账，避免把存量章节的全文算成当天码字。
+ * 手写记账（会话口径）：写作页的实时计数器统计本次编辑会话内的净增（加减抵消、不低于 0），
+ * 通过 recordManualSession 持续写入「当天 × 书」的进行中会话槽位；退出写作页时 commitManualSession
+ * 把它并入已入账字数，下次进入从 0 开始新会话。因此实时面板与统计页永远相等，
+ * 退出后再进来删旧字也不会把已入账的数字扣回去。
+ * 章节字数基线（chapterBase）现在只服务 AI 记账，手写落盘不再按基线差记账。
  *
  * 存储：localStorage 单键 JSON。数据量小（每天每本书一条数字），
  * 桌面端 WebView 的 localStorage 同样跟随应用数据目录持久化。
@@ -61,6 +63,9 @@ interface DayBookRecord {
   // 缺失表示该日有旧口径记录，无法精确回算；不得以新记录补成完整历史。
   textManual?: number
   textAi?: number
+  /** 进行中编辑会话的手写净增，退出写作页时并入 manual/textManual */
+  sessionManual?: number
+  sessionTextManual?: number
 }
 
 interface StatsFile {
@@ -143,9 +148,9 @@ const sumDay = (
     manual = addKnown(
       manual,
       mode === 'all'
-        ? Number(record.manual || 0)
+        ? Number(record.manual || 0) + Number(record.sessionManual || 0)
         : typeof record.textManual === 'number'
-          ? record.textManual
+          ? record.textManual + Number(record.sessionTextManual || 0)
           : null
     )
     ai = addKnown(
@@ -195,20 +200,69 @@ function recordChapterLanding(
   const key = `${bookId}:${chapterId}`
   const count = normalizeCount(wordCount)
   const textCount = textWordCount === undefined ? undefined : normalizeCount(textWordCount)
-  const delta = Math.max(0, count - (file.chapterBase[key] ?? (source === 'ai' ? 0 : count)))
+  if (source === 'manual') {
+    // 手写改走会话口径，落盘只刷新基线给 AI 记账用
+    file.chapterBase[key] = count
+    if (textCount !== undefined) file.chapterTextBase[key] = textCount
+    saveFile(file)
+    return
+  }
+  // AI 首次见到该章时基线视为 0：整章落稿全记 AI
+  const delta = Math.max(0, count - (file.chapterBase[key] ?? 0))
   const textDelta =
-    textCount === undefined
-      ? undefined
-      : Math.max(0, textCount - (file.chapterTextBase[key] ?? (source === 'ai' ? 0 : textCount)))
+    textCount === undefined ? undefined : Math.max(0, textCount - (file.chapterTextBase[key] ?? 0))
   file.chapterBase[key] = count
   if (textCount !== undefined) file.chapterTextBase[key] = textCount
   if (delta || textDelta) {
+    // 走到这里只剩 AI 来源（手写已在上面提前返回）
     const record = dayRecord(file, bookId)
-    record[source] += delta
-    const field = source === 'manual' ? 'textManual' : 'textAi'
-    if (textDelta === undefined) delete record[field]
-    else if (record[field] !== undefined) record[field]! += textDelta
+    record.ai += delta
+    if (textDelta === undefined) delete record.textAi
+    else if (record.textAi !== undefined) record.textAi += textDelta
   }
+  saveFile(file)
+}
+
+const commitSessionRecord = (record: DayBookRecord) => {
+  record.manual += Number(record.sessionManual || 0)
+  if (typeof record.textManual === 'number') record.textManual += Number(record.sessionTextManual || 0)
+  delete record.sessionManual
+  delete record.sessionTextManual
+}
+
+/** 把所有书、所有日期里遗留的进行中会话并入已入账字数（正常退出、异常退出后重进都走这里） */
+const commitAllSessions = (file: StatsFile) => {
+  for (const day of Object.values(file.days)) {
+    for (const record of Object.values(day)) {
+      if (record.sessionManual !== undefined || record.sessionTextManual !== undefined) commitSessionRecord(record)
+    }
+  }
+}
+
+/** 进入写作页：先把上一次（含异常退出）没入账的会话并进去，再从 0 开始新会话 */
+export const beginManualSession = () => {
+  const file = loadFile()
+  commitAllSessions(file)
+  saveFile(file)
+}
+
+/** 写作页实时计数器的会话净增覆盖写入当天该书的会话槽位（幂等，可反复调用） */
+export const recordManualSession = (bookId: string | number, words: number, textWords: number) => {
+  const file = loadFile()
+  const all = normalizeCount(words)
+  const text = normalizeCount(textWords)
+  const day = file.days[today()]
+  if (!all && !text && !day?.[String(bookId)]) return
+  const record = dayRecord(file, bookId)
+  record.sessionManual = all
+  if (typeof record.textManual === 'number') record.sessionTextManual = text
+  saveFile(file)
+}
+
+/** 退出写作页：本次会话净增正式入账 */
+export const commitManualSession = () => {
+  const file = loadFile()
+  commitAllSessions(file)
   saveFile(file)
 }
 

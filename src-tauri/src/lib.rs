@@ -12,6 +12,8 @@ use tauri::webview::{NewWindowFeatures, NewWindowResponse};
 use tauri::{Manager, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 
 mod window_state;
+mod backup_restore;
+mod full_backup;
 
 const MAIN_WINDOW_LABEL: &str = "main";
 /// 主窗口关闭兜底超时：前端 onCloseRequested 正常会自行 destroy；
@@ -548,11 +550,11 @@ fn restart_app(app: DesktopAppHandle) {
 // 设置中心可视化编辑与用户直接改文件双向同步（启动时读入，保存时写回）。
 // ---------------------------------------------------------------------------
 
-fn prompt_dir_path() -> Result<PathBuf, String> {
+pub(crate) fn prompt_dir_path() -> Result<PathBuf, String> {
     Ok(home_dir()?.join("Documents").join("易创提示词"))
 }
 
-fn ensure_prompt_dir() -> Result<PathBuf, String> {
+pub(crate) fn ensure_prompt_dir() -> Result<PathBuf, String> {
     let dir = prompt_dir_path()?;
     if !dir.exists() {
         std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
@@ -1054,6 +1056,14 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            backup_restore::scan_backup_directory,
+            full_backup::full_backup_begin,
+            full_backup::full_backup_add_entry,
+            full_backup::full_backup_finish,
+            full_backup::full_restore_open,
+            full_backup::full_restore_read_entry,
+            full_backup::full_restore_apply_prompts,
+            full_backup::full_restore_close,
             write_export_file,
             append_app_log,
             get_default_backup_dir,

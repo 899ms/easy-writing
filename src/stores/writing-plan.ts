@@ -2,7 +2,14 @@ import { readUiPreferences } from '@/stores/ui-preferences'
 import { defineStore } from 'pinia'
 import dayjs from 'dayjs'
 import piniaPersistConfig from '@/stores/helper/persist'
-import { getStatsOverview, getStatsTargets, setStatsTargets } from '@/storage/local-write-stats'
+import {
+  beginManualSession,
+  commitManualSession,
+  getStatsOverview,
+  getStatsTargets,
+  recordManualSession,
+  setStatsTargets,
+} from '@/storage/local-write-stats'
 import { ElMessage } from 'element-plus'
 
 interface PanelPosition {
@@ -14,7 +21,9 @@ const formatNumber = (val: number) => Number.isFinite(val) ? val : 0
 
 interface WritingPlanState {
   targetWords: number
-  todayWords: number
+  /** 进入写作页时账本里已入账的今日手写字数（不含本次会话），两种口径各一份 */
+  todayBaseWords: number
+  todayBaseTextWords: number
   todayWordsAvailable: boolean
   writingSeconds: number
   staySeconds: number
@@ -36,7 +45,6 @@ interface WritingPlanState {
   editingGraceMs: number
   tickTimer: number | null
   reportTimer: number | null
-  pendingWords: number
   pendingStaySeconds: number
   pendingWritingSeconds: number
   pendingIdleSeconds: number
@@ -48,7 +56,8 @@ interface WritingPlanState {
 export const useWritingPlanStore = defineStore('ew-writing-plan', {
   state: (): WritingPlanState => ({
     targetWords: 0,
-    todayWords: 0,
+    todayBaseWords: 0,
+    todayBaseTextWords: 0,
     todayWordsAvailable: true,
     writingSeconds: 0,
     staySeconds: 0,
@@ -67,7 +76,6 @@ export const useWritingPlanStore = defineStore('ew-writing-plan', {
     editingGraceMs: 2500,
     tickTimer: null as number | null,
     reportTimer: null as number | null,
-    pendingWords: 0,
     pendingStaySeconds: 0,
     pendingWritingSeconds: 0,
     pendingIdleSeconds: 0,
@@ -76,14 +84,20 @@ export const useWritingPlanStore = defineStore('ew-writing-plan', {
     trackingStarted: false,
   }),
   getters: {
-    planProgress(state): number {
-      if (!state.todayWordsAvailable || !state.targetWords) return 0
-      if (!state.todayWords) return 0
-      return Math.min(100, Math.round((state.todayWords / state.targetWords) * 100))
+    /** 今日已写 = 已入账 + 本次会话净增，与账本口径完全一致，任何时刻重读都不会跳变 */
+    todayWords(state): number {
+      return readUiPreferences().wordCountMode === 'text'
+        ? state.todayBaseTextWords + state.sessionTextWords
+        : state.todayBaseWords + state.sessionWords
     },
-    remainingWords(state): number {
-      if (!state.todayWordsAvailable || !state.targetWords) return 0
-      return Math.max(state.targetWords - state.todayWords, 0)
+    planProgress(): number {
+      if (!this.todayWordsAvailable || !this.targetWords) return 0
+      if (!this.todayWords) return 0
+      return Math.min(100, Math.round((this.todayWords / this.targetWords) * 100))
+    },
+    remainingWords(): number {
+      if (!this.todayWordsAvailable || !this.targetWords) return 0
+      return Math.max(this.targetWords - this.todayWords, 0)
     },
     idleSeconds(state): number {
       return Math.max(state.idleSecondsTotal, 0)
@@ -92,7 +106,8 @@ export const useWritingPlanStore = defineStore('ew-writing-plan', {
   actions: {
     async bootstrap(bookId?: string | number) {
       this.bookId = bookId ?? null
-      this.pendingWords = 0
+      // 上一次会话（含异常退出没来得及入账的）先并入账本，本次从 0 起算
+      beginManualSession()
       this.pendingStaySeconds = 0
       this.pendingWritingSeconds = 0
       this.pendingIdleSeconds = 0
@@ -128,9 +143,15 @@ export const useWritingPlanStore = defineStore('ew-writing-plan', {
         this.lastSummaryDate = targetDate
         // 开源版：计划数据来自本地码字账本，目标与今日字数都取古法口径
         this.targetWords = formatNumber(getStatsTargets().manual)
-        const words = getStatsOverview(targetDate).manualWords
-        this.todayWordsAvailable = words !== null
-        this.todayWords = formatNumber(words ?? 0)
+        // 先把本次会话写进账本，再读总数并减掉会话部分，得到"已入账"基数；
+        // 这样重读前后 todayWords 恒等于 基数 + 会话，不会跳变
+        await this.flushReport(true)
+        const allWords = getStatsOverview(targetDate, undefined, 'all').manualWords
+        const textWords = getStatsOverview(targetDate, undefined, 'text').manualWords
+        this.todayBaseWords = Math.max(0, formatNumber(allWords ?? 0) - this.sessionWords)
+        this.todayBaseTextWords = Math.max(0, formatNumber(textWords ?? 0) - this.sessionTextWords)
+        const current = readUiPreferences().wordCountMode === 'text' ? textWords : allWords
+        this.todayWordsAvailable = current !== null
       } finally {
         this.summaryLoading = false
       }
@@ -139,12 +160,9 @@ export const useWritingPlanStore = defineStore('ew-writing-plan', {
       this.ensureTimersRunning()
       const previousAll = this.sessionWords
       const previousText = this.sessionTextWords
+      // 会话净增不低于 0：删掉的是本次会话之前的旧字时不扣，今日已写由 getter 按 基数 + 会话 得出
       this.sessionWords = Math.max(0, previousAll + Math.trunc(Number(count) || 0))
       this.sessionTextWords = Math.max(0, previousText + Math.trunc(Number(textCount) || 0))
-      const delta = readUiPreferences().wordCountMode === 'text'
-        ? this.sessionTextWords - previousText : this.sessionWords - previousAll
-      this.todayWords = Math.max(0, this.todayWords + delta)
-      this.pendingWords += delta
     },
     notifyTyping() {
       this.ensureTimersRunning()
@@ -244,8 +262,8 @@ export const useWritingPlanStore = defineStore('ew-writing-plan', {
       }, 30000)
     },
     async flushReport(_force = false) {
-      // 开源版无服务端上报；字数已由写作台落盘时记入本地账本，这里只清空待报量
-      this.pendingWords = 0
+      // 开源版无服务端上报：把本次会话净增覆盖写入账本的会话槽位（幂等），时间类待报量清空
+      if (this.bookId != null) recordManualSession(this.bookId, this.sessionWords, this.sessionTextWords)
       this.pendingStaySeconds = 0
       this.pendingWritingSeconds = 0
       this.pendingIdleSeconds = 0
@@ -254,6 +272,8 @@ export const useWritingPlanStore = defineStore('ew-writing-plan', {
     async teardown() {
       this.stopTimers()
       await this.flushReport(true)
+      // 本次会话正式入账，下次进入从 0 起算
+      commitManualSession()
       this.resetSessionStats()
     }
   },

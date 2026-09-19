@@ -16,6 +16,8 @@ export type MenuId =
 export interface UiPreferences {
   hiddenMenus: MenuId[]
   wordCountMode: WordCountMode
+  /** 进入作品时自动打开上次编辑的章节并恢复光标、滚动位置 */
+  restoreWritingPosition: boolean
 }
 
 /** 含标点数保留原字段；缺失的不含标点数使用 null，不能当作 0。 */

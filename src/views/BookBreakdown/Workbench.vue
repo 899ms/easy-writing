@@ -965,7 +965,7 @@ onBeforeUnmount(() => {
   height: 100%;
   overflow: hidden;
   // background: var(--bg-main);
-  --chart-grid-color: rgba(0, 0, 0, 0.05);
+  --chart-grid-color: color-mix(in srgb, var(--ink-main) 6%, transparent);
 }
 
 .workbench-header {
@@ -995,7 +995,7 @@ onBeforeUnmount(() => {
   width: 40px;
   height: 40px;
   border-radius: 12px;
-  background: rgba(176, 105, 53, 0.15);
+  background: color-mix(in srgb, var(--ink-accent) 15%, transparent);
   color: var(--ink-accent);
   display: flex;
   align-items: center;
@@ -1079,7 +1079,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   font-size: 26px;
-  background: rgba(176, 105, 53, 0.12);
+  background: color-mix(in srgb, var(--ink-accent) 12%, transparent);
   color: var(--ink-accent);
 }
 
@@ -1151,8 +1151,8 @@ onBeforeUnmount(() => {
 
 .filter-chip.active {
   color: var(--ink-accent);
-  border-color: rgba(176, 105, 53, 0.3);
-  background: rgba(176, 105, 53, 0.12);
+  border-color: color-mix(in srgb, var(--ink-accent) 30%, transparent);
+  background: color-mix(in srgb, var(--ink-accent) 12%, transparent);
 }
 
 .chapter-list {
@@ -1184,11 +1184,11 @@ onBeforeUnmount(() => {
 
 .chapter-item:hover,
 .chapter-item.active {
-  background: rgba(176, 105, 53, 0.08);
+  background: color-mix(in srgb, var(--ink-accent) 8%, transparent);
 }
 
 .chapter-item.is-failed {
-  background: rgba(198, 62, 46, 0.05);
+  background: color-mix(in srgb, var(--state-danger) 5%, transparent);
 }
 
 .chap-failed {
@@ -1276,11 +1276,11 @@ onBeforeUnmount(() => {
 }
 
 .chapter-menu .menu-item:hover {
-  background: rgba(176, 105, 53, 0.12);
+  background: color-mix(in srgb, var(--ink-accent) 12%, transparent);
 }
 
 .chapter-menu .menu-item.danger {
-  color: var(--ink-danger);
+  color: var(--state-danger);
 }
 
 .batch-bar {
@@ -1347,13 +1347,13 @@ onBeforeUnmount(() => {
 }
 
 .reader-paragraph.highlight {
-  background: rgba(176, 105, 53, 0.12);
-  border-bottom: 2px solid rgba(176, 105, 53, 0.3);
+  background: color-mix(in srgb, var(--ink-accent) 12%, transparent);
+  border-bottom: 2px solid color-mix(in srgb, var(--ink-accent) 30%, transparent);
   cursor: pointer;
 }
 
 .reader-paragraph.active {
-  background: rgba(176, 105, 53, 0.22);
+  background: color-mix(in srgb, var(--ink-accent) 22%, transparent);
   border-bottom-color: var(--ink-accent);
 }
 
@@ -1369,7 +1369,7 @@ onBeforeUnmount(() => {
 .insight-header {
   padding: 14px 18px;
   border-bottom: 1px solid var(--ui-border);
-  background: linear-gradient(120deg, rgba(176, 105, 53, 0.12), rgba(176, 105, 53, 0.02));
+  background: linear-gradient(120deg, color-mix(in srgb, var(--ink-accent) 12%, transparent), color-mix(in srgb, var(--ink-accent) 2%, transparent));
 }
 
 .insight-title {
@@ -1472,20 +1472,25 @@ onBeforeUnmount(() => {
   border-radius: 12px;
   border: 1px solid var(--ui-border);
   background: var(--card-bg);
+  // 原生 button 默认字色是黑色，标题行没单独指定颜色时会在深色主题下看不见
+  color: var(--ink-main);
+  font-family: inherit;
   cursor: pointer;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .insight-card.active {
-  border-color: rgba(176, 105, 53, 0.4);
-  box-shadow: 0 6px 16px rgba(176, 105, 53, 0.16);
+  border-color: color-mix(in srgb, var(--ink-accent) 40%, transparent);
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--ink-accent) 16%, transparent);
 }
 
 .card-head {
   display: flex;
   justify-content: space-between;
+  gap: 8px;
   font-size: 13px;
   font-weight: 600;
+  color: var(--ink-main);
   margin-bottom: 6px;
 }
 
@@ -1522,12 +1527,8 @@ onBeforeUnmount(() => {
 }
 
 .tag.key {
-  background: rgba(176, 105, 53, 0.16);
+  background: color-mix(in srgb, var(--ink-accent) 16%, transparent);
   color: var(--ink-accent);
-}
-
-:global(.theme-dark .workbench-page) {
-  --chart-grid-color: rgba(255, 255, 255, 0.08);
 }
 
 @media (max-width: 1200px) {
@@ -1567,7 +1568,7 @@ onBeforeUnmount(() => {
 /* 黄金三章深拆 */
 .golden-title i {
   margin-right: 6px;
-  color: #c9a04e;
+  color: var(--ink-warning);
 }
 
 .golden-list .anchor-item .dim-desc {
@@ -1597,7 +1598,7 @@ onBeforeUnmount(() => {
     padding: 8px 12px;
     border: 1px solid var(--ui-border);
     border-radius: 8px;
-    background: var(--bg-card);
+    background: var(--card-bg);
   }
 
   .dim-key {
@@ -1613,7 +1614,7 @@ onBeforeUnmount(() => {
     }
 
     .pending-mark {
-      color: #c9362c;
+      color: var(--state-danger);
     }
   }
 
@@ -1629,7 +1630,7 @@ onBeforeUnmount(() => {
   padding: 12px 14px;
   border-left: 3px solid var(--ink-accent);
   border-radius: 0 8px 8px 0;
-  background: var(--bg-card);
+  background: var(--card-bg);
   color: var(--ink-sec);
   line-height: 1.8;
   font-size: 13px;
@@ -1643,7 +1644,7 @@ onBeforeUnmount(() => {
   padding: 8px;
   border: 1px solid var(--ui-border);
   border-radius: 8px;
-  background: var(--bg-card);
+  background: var(--card-bg);
   overflow-x: auto;
 }
 

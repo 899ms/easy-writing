@@ -23,7 +23,14 @@
       <!-- 详情内容 (Rich Text Editor) -->
       <div class="detail-content" v-if="currentOutline">
         <div class="section-header">
-          <input v-model="currentOutline.title" class="title-input" placeholder="输入大纲标题..." />
+          <input
+            v-model="currentOutline.title"
+            class="title-input"
+            placeholder="输入大纲标题..."
+            @input="handleTitleInput"
+            @blur="commitCurrentTitle"
+            @keyup.enter="commitCurrentTitle"
+          />
           <i class="fa-solid fa-edit"></i>
         </div>
 
@@ -257,6 +264,10 @@ const aiAbortController = ref<AbortController | null>(null)
 const outlineUndoSnapshot = ref<{ outlineId: number; originalHtml: string } | null>(null)
 let contentSaveTimer: number | null = null
 let pendingContentSave: { id: number; content: string } | null = null
+let titleSaveTimer: number | null = null
+let titleSavePromise: Promise<boolean> | null = null
+const pendingTitles = new Map<number, string>()
+const syncedTitleById = new Map<number, string>()
 const suppressAutoSave = ref(false)
 
 // 避免富文本编辑器初始化/空内容归一化导致反复触发保存
@@ -379,10 +390,12 @@ const buildOutlineTree = (nodes: OutlineNode[]) => {
   }
   outlineTree.value = tree
   syncedContentById.clear()
+  syncedTitleById.clear()
   for (const folder of tree) {
     for (const item of folder.children) {
       if (typeof item.originId === 'number' && Number.isFinite(item.originId)) {
         syncedContentById.set(item.originId, normalizeRichText(item.content))
+        syncedTitleById.set(item.originId, item.title)
       }
     }
   }
@@ -399,6 +412,7 @@ const ensureBookContext = () => {
 
 const fetchOutlineTree = async () => {
   if (!props.bookId) return
+  if ((pendingTitles.size || titleSavePromise || pendingContentSave) && !(await flushPendingSave())) return
   try {
     const { data } = await getOutlineTreeApi({ bookId: String(props.bookId) })
     buildOutlineTree(data || [])
@@ -438,12 +452,12 @@ watch(
     }
     pendingContentSave = { id: originId, content: outline?.content ?? '' }
     contentSaveTimer = window.setTimeout(() => {
-      void flushPendingSave()
+      void flushPendingContentSave()
     }, 800)
   }
 )
 
-const flushPendingSave = async () => {
+const flushPendingContentSave = async () => {
   if (contentSaveTimer) {
     window.clearTimeout(contentSaveTimer)
     contentSaveTimer = null
@@ -464,22 +478,88 @@ const flushPendingSave = async () => {
   }
 }
 
+const queueTitleSave = (item: OutlineItem, value: string) => {
+  const id = item.originId
+  if (id == null) return
+  const title = value.trim()
+  if (!title) {
+    pendingTitles.delete(id)
+    return
+  }
+  if (title === syncedTitleById.get(id) && !pendingTitles.has(id) && !titleSavePromise) return
+  pendingTitles.set(id, title)
+  if (titleSaveTimer) window.clearTimeout(titleSaveTimer)
+  titleSaveTimer = window.setTimeout(() => { void flushPendingTitles() }, 800)
+}
+
+// 按节点保留待保存标题并串行写入，避免切换节点丢失修改、旧请求覆盖较新的名称。
+const flushPendingTitles = (): Promise<boolean> => {
+  if (titleSaveTimer) {
+    window.clearTimeout(titleSaveTimer)
+    titleSaveTimer = null
+  }
+  if (titleSavePromise) return titleSavePromise.then(saved => saved && pendingTitles.size ? flushPendingTitles() : saved)
+  titleSavePromise = (async () => {
+    while (pendingTitles.size) {
+      const [id, title] = pendingTitles.entries().next().value as [number, string]
+      pendingTitles.delete(id)
+      try {
+        await updateOutlineNodeApi({ id, title })
+        syncedTitleById.set(id, title)
+      } catch (error) {
+        if (!pendingTitles.has(id)) pendingTitles.set(id, title)
+        console.error('保存大纲标题失败:', error)
+        ElMessage.error('大纲标题保存失败，请重试')
+        return false
+      }
+    }
+    return true
+  })().finally(() => { titleSavePromise = null })
+  return titleSavePromise.then(saved => saved && pendingTitles.size ? flushPendingTitles() : saved)
+}
+
+const handleTitleInput = (event: Event) => {
+  if ((event as InputEvent).isComposing || !currentOutline.value) return
+  queueTitleSave(currentOutline.value, (event.target as HTMLInputElement).value)
+}
+
+const finalizeCurrentTitle = () => {
+  const item = currentOutline.value
+  if (!item || item.originId == null) return
+  item.title = item.title.trim() || syncedTitleById.get(item.originId) || '新大纲'
+  queueTitleSave(item, item.title)
+}
+
+const commitCurrentTitle = (event?: Event) => {
+  if ((event as KeyboardEvent | undefined)?.isComposing) return
+  finalizeCurrentTitle()
+  return flushPendingTitles()
+}
+
+const flushPendingSave = async () => {
+  finalizeCurrentTitle()
+  const [titleSaved, contentSaved] = await Promise.all([flushPendingTitles(), flushPendingContentSave()])
+  return titleSaved && contentSaved
+}
+
 const handlePopout = async () => {
-  await flushPendingSave()
+  if (!(await flushPendingSave())) return
   emit('popout')
 }
 
 const handleDock = async () => {
-  await flushPendingSave()
+  if (!(await flushPendingSave())) return
   emit('dock')
 }
 
 const handleClose = async () => {
-  await flushPendingSave()
+  if (!(await flushPendingSave())) return
   emit('close')
 }
 
 const selectOutline = (item: OutlineItem) => {
+  // 先捕获旧节点的保存内容，再立即切换界面；待保存标题按节点独立排队。
+  if (currentOutline.value?.id !== item.id) void flushPendingSave()
   if (outlineUndoSnapshot.value?.outlineId !== item.originId) {
     outlineUndoSnapshot.value = null
   }
@@ -510,17 +590,14 @@ const startEdit = (item: OutlineItem) => {
 const saveEdit = async (item: OutlineItem) => {
   if (!editingOutlineId.value || !item.originId) return
   const newTitle = editingTitle.value.trim()
-  if (!newTitle || newTitle === item.title) {
+  if (!newTitle) {
     cancelEdit()
     return
   }
-  try {
-    await updateOutlineNodeApi({ id: item.originId, title: newTitle })
-    item.title = newTitle
+  item.title = newTitle
+  queueTitleSave(item, newTitle)
+  if (await flushPendingTitles()) {
     activeOutlineId.value = item.id
-  } catch (error) {
-    console.error('更新大纲标题失败:', error)
-  } finally {
     cancelEdit()
   }
 }
@@ -591,6 +668,7 @@ const confirmDeleteNode = async (ids: number[]) => {
     confirmButtonText: '删除',
     cancelButtonText: '取消'
   })
+  if (!(await flushPendingSave())) return
   await deleteOutlineNodeApi({ ids })
   await fetchOutlineTree()
 }

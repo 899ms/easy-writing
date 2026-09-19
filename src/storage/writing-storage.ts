@@ -79,7 +79,18 @@ export const countDraftWords = (value: unknown) =>
 export const buildBookWordCountKey = (userId: string | number) =>
   `bookWordCounts:${String(userId)}`
 
+/** 一键备份用的正文库全量快照：草稿、历史版本、sync_settings 键值 */
+export interface WritingStorageDump {
+  chapters: StoredLocalChapterDraft[]
+  versions: StoredChapterVersion[]
+  settings: Array<{ key: string; value: string }>
+}
+
 export interface WritingStorage {
+  /** 一键备份：三张表原样导出（settings 的 value 统一为 JSON 文本） */
+  exportAllRecords(): Promise<WritingStorageDump>
+  /** 一键恢复：replace=先清空再写入；否则按主键逐条写入（调用方已重映射 id 与 storageKey） */
+  importAllRecords(dump: WritingStorageDump, options: { replace: boolean }): Promise<void>
   getChapter(chapterId: number): Promise<StoredLocalChapterDraft | null>
   getChapterByIdentity(userId: string, bookId: string | number, chapterId: number): Promise<StoredLocalChapterDraft | null>
   saveChapterLocal(payload: LocalChapterDraft): Promise<StoredLocalChapterDraft>

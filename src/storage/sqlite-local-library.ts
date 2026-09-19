@@ -5,9 +5,11 @@ import type {
   LocalBookGroup,
   LocalBookListQuery,
   LocalChapter,
+  LocalLibraryDump,
   LocalLibraryStorage,
   LocalVolume,
   RemoteCatalogVolumeInput,
+  UpdateLocalBookOptions
 } from './local-library-types'
 import {
   buildLocalTree,
@@ -242,6 +244,29 @@ export class SqliteLocalLibraryStorage implements LocalLibraryStorage {
     return next
   }
 
+  async exportAllRecords() {
+    await this.getDb()
+    return {
+      groups: await this.all<LocalBookGroup>(TABLE_GROUPS),
+      books: await this.all<LocalBook>(TABLE_BOOKS),
+      volumes: await this.all<LocalVolume>(TABLE_VOLUMES),
+      chapters: await this.all<LocalChapter>(TABLE_CHAPTERS),
+    }
+  }
+
+  async importAllRecords(dump: LocalLibraryDump, options: { replace: boolean }) {
+    const db = await this.getDb()
+    if (options.replace) {
+      for (const table of [TABLE_CHAPTERS, TABLE_VOLUMES, TABLE_BOOKS, TABLE_GROUPS]) {
+        await db.execute(`DELETE FROM ${table}`)
+      }
+    }
+    for (const group of dump.groups) await this.putGroup(normalizeLocalGroup(group))
+    for (const book of dump.books) await this.putBook(normalizeLocalBook(book))
+    for (const volume of dump.volumes) await this.putVolume(normalizeLocalVolume(volume))
+    for (const chapter of dump.chapters) await this.putChapter(normalizeLocalChapter(chapter))
+  }
+
   async listLocalBooks(query: LocalBookListQuery = {}) {
     await this.getDb()
     const keyword = String(query.keyWord || '').trim().toLowerCase()
@@ -318,10 +343,14 @@ export class SqliteLocalLibraryStorage implements LocalLibraryStorage {
     await this.refreshBookStats(bookId)
   }
 
-  async updateLocalBook(payload: Partial<LocalBook> & { id: number }) {
+  async updateLocalBook(payload: Partial<LocalBook> & { id: number }, options?: UpdateLocalBookOptions) {
     await this.getDb()
     const current = await this.getLocalBookDetail(payload.id)
-    const next = normalizeLocalBook({ ...(current || {}), ...payload, updateTime: nowIso() })
+    const next = normalizeLocalBook({
+      ...(current || {}),
+      ...payload,
+      updateTime: options?.keepUpdateTime && current?.updateTime ? current.updateTime : nowIso(),
+    })
     await this.putBook(next)
     return next
   }

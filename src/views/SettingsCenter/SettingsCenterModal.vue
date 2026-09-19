@@ -211,7 +211,11 @@ const instantHint = computed(() => (activeSection.value === 'sensitive' ? 'è¯åº
 const loadSettings = async () => {
   loading.value = true
   try {
-    Object.assign(uiDraft, { hiddenMenus: [...uiPreferences.hiddenMenus], wordCountMode: uiPreferences.wordCountMode })
+    Object.assign(uiDraft, {
+      hiddenMenus: [...uiPreferences.hiddenMenus],
+      wordCountMode: uiPreferences.wordCountMode,
+      restoreWritingPosition: uiPreferences.restoreWritingPosition,
+    })
     const stored = await backupService.getSettings()
     settingsDraft.value = normalizeLocalWritingSettings(stored)
     selectedTheme.value = themeStore.currentTheme

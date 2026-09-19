@@ -603,6 +603,7 @@ import Placeholder from '@tiptap/extension-placeholder'
 import CharacterCount from '@tiptap/extension-character-count'
 import type { EditorView } from 'prosemirror-view'
 import { ElMessage } from 'element-plus'
+import { readUiPreferences } from '@/stores/ui-preferences'
 // 组件引入
 import EditorBubbleMenu from './EditorBubbleMenu.vue'
 import AiReviewWidget from './AiReviewWidget.vue'
@@ -682,6 +683,7 @@ import {
   plainTextToTiptapJson,
 } from '../editor-utils/content-normalize'
 import { primeChapterWords, recordAiWordsAdded, recordChapterWords } from '@/storage/local-write-stats'
+import { isWritingPositionDrifted, readWritingPosition, saveWritingPosition } from '@/storage/local-writing-position'
 import { useWordCount } from '@/composables/use-word-count'
 import { countWords, countTextWords } from '@/utils/word-count'
 
@@ -856,6 +858,7 @@ const handleEditorScroll = () => {
   const el = editorScrollRef.value
   if (!el || isApplyingEditorScroll) return
   hideEntityHover()
+  scheduleWritingPositionPersist()
   editorStore.setWritingScrollRatio(getScrollRatio(el), 'editor')
   if (isBubbleMenuVisible.value) {
     updateBubbleMenuPosition()
@@ -1019,6 +1022,59 @@ const suppressAutoSave = ref(false)
 // 输入法组词进行中。此时文档里是拼音而不是最终汉字，任何落盘都会存下半成品。
 const isComposingInput = ref(false)
 const chapterContentReady = ref(false)
+
+// ---- 写作位置记忆：光标与滚动位置随保存/切章/离开写入本机，进入章节时恢复 ----
+let lastCaretPos = 0
+let writingPositionTimer: number | null = null
+/** 进入作品后的第一次恢复给一次轻提示，之后切章静默恢复 */
+let pendingPositionHint = true
+
+const persistWritingPosition = (chapterId = Number(activeChapterId.value || 0)) => {
+  if (writingPositionTimer) {
+    window.clearTimeout(writingPositionTimer)
+    writingPositionTimer = null
+  }
+  const ed = editor.value
+  if (!ed || !props.bookId || !chapterId || !chapterContentReady.value) return
+  saveWritingPosition(props.bookId, chapterId, {
+    pos: lastCaretPos,
+    scrollTop: editorScrollRef.value?.scrollTop ?? 0,
+    docSize: ed.state.doc.content.size,
+  })
+}
+
+const scheduleWritingPositionPersist = () => {
+  if (writingPositionTimer) return
+  writingPositionTimer = window.setTimeout(() => {
+    writingPositionTimer = null
+    persistWritingPosition()
+  }, 3000)
+}
+
+const restoreWritingPosition = (chapterId: number) => {
+  const showHint = pendingPositionHint
+  pendingPositionHint = false
+  if (!readUiPreferences().restoreWritingPosition) return
+  const ed = editor.value
+  if (!ed || !props.bookId) return
+  const record = readWritingPosition(props.bookId, chapterId)
+  if (!record) return
+  const docSize = ed.state.doc.content.size
+  // 正文被 AI 重写、版本回退或备份覆盖过：旧坐标不可信，退到章末
+  const drifted = isWritingPositionDrifted(record, docSize)
+  const target = drifted ? 'end' : Math.min(Math.max(record.pos, 1), Math.max(1, docSize - 1))
+  ed.commands.focus(target, { scrollIntoView: true })
+  lastCaretPos = ed.state.selection.from
+  if (!drifted && record.scrollTop > 0) {
+    requestAnimationFrame(() => {
+      const el = editorScrollRef.value
+      if (el && editor.value === ed) el.scrollTop = record.scrollTop
+    })
+  }
+  if (showHint && (record.pos > 1 || record.scrollTop > 0)) {
+    ElMessage({ message: '已回到上次编辑位置', type: 'info', duration: 1600, grouping: true })
+  }
+}
 // 编辑器里这份正文究竟属于哪一章。
 //
 // 「当前章节 ID」和「编辑器里的正文」来自两条不同的更新链路：前者在用户点击时
@@ -1557,8 +1613,10 @@ const updateLocalChapterMeta = async (draft: LocalChapterDraft) => {
   const chapterId = Number(draft.chapterId || 0)
   if (!bookId || !chapterId) return
   const wordCount = countWords(draft.textContent)
-  // 本地码字统计记账：按章节字数基线求净增，喂首页进度与统计页
+  // 刷新章节字数基线（AI 记账用）；手写字数走会话口径，落盘时顺手把会话净增写进账本，异常退出也少丢
   recordChapterWords(bookId, chapterId, wordCount, countTextWords(draft.textContent))
+  void planStore.flushReport()
+  if (chapterId === Number(activeChapterId.value || 0)) persistWritingPosition(chapterId)
   const book = await localLibrary.updateLocalChapterContentMeta({
     bookId,
     chapterId,
@@ -1781,6 +1839,7 @@ const loadChapterContent = async (chapterId: number) => {
       lastSavedContentJson.value = localDraft?.contentJson ?? null
       currentChapterStorageUserId.value = LOCAL_USER_ID
       markChapterReady(chapterId)
+      restoreWritingPosition(chapterId)
       const wordCount = countWords(text)
       editorStore.setChapterWordCount(wordCount)
       editorStore.resetLocalSessionWords(wordCount, countTextWords(text))
@@ -1817,6 +1876,8 @@ watch(
 watch(
   () => activeChapterId.value,
   (chapterId, prevId) => {
+    // 离开旧章前把它的光标/滚动位置记下来（此时编辑器里还是旧章内容）
+    if (prevId && prevId !== chapterId) persistWritingPosition(prevId)
     if (!chapterId) {
       // 清空章节时废弃仍在返回中的旧章节请求。
       latestChapterRequestId += 1
@@ -1906,10 +1967,11 @@ const createEditorInstance = (content: unknown) => {
   if (oldEditor) {
     oldEditor.destroy()
   }
-  if (editorKeydownTarget && editorKeydownHandler) {
-    editorKeydownTarget.removeEventListener(
+  if (editorKeydownHandler) {
+    document.removeEventListener(
       'keydown',
       editorKeydownHandler as unknown as EventListener,
+      { capture: true },
     )
   }
   if (editorKeydownTarget && editorBeforeInputHandler) {
@@ -2001,6 +2063,8 @@ const createEditorInstance = (content: unknown) => {
       // 事务要真正传进来，查找跳转（scrolledToMatch）的气泡抑制才生效
       updateBubbleMenuPosition({ transaction })
       scheduleWebKitCaretUpdate()
+      lastCaretPos = ed.state.selection.from
+      scheduleWritingPositionPersist()
     })
     ed.on('focus', () => {
       scheduleWebKitCaretUpdate()
@@ -2047,6 +2111,10 @@ const createEditorInstance = (content: unknown) => {
             triggerTypingFeedback()
             planStore.notifyTyping()
             planStore.addWords(insertedChars, countInsertedCharsFromTransaction(transaction, 'text'))
+          } else if (isPasteDrop && insertedChars > 0) {
+            // 粘贴/拖入的文字计入字数但不触发打字反馈；实时计数现在就是账本本身，
+            // 粘贴覆盖选区时下面会扣掉被覆盖的字，这里不加回来就会净扣
+            planStore.addWords(insertedChars, countInsertedCharsFromTransaction(transaction, 'text'))
           }
 
           // 删除：无论是键盘删除、剪切、还是粘贴覆盖造成的删除，都需要回退净字数
@@ -2070,6 +2138,8 @@ const createEditorInstance = (content: unknown) => {
 
     editorKeydownTarget = ed.view.dom as unknown as HTMLElement
     editorKeydownHandler = (evt: KeyboardEvent) => {
+      // 挂在 document 上，只认发生在编辑器内部的按键
+      if (!(evt.target instanceof Node) || !editorKeydownTarget?.contains(evt.target)) return
       if (suppressAutoSave.value || !ed.isEditable) return
       // 过滤组合键和纯修饰键，避免误判为“键盘输入”来源
       if (evt.ctrlKey || evt.metaKey || evt.altKey) return
@@ -2083,9 +2153,15 @@ const createEditorInstance = (content: unknown) => {
         triggerTypingSound()
       }
     }
-    editorKeydownTarget.addEventListener(
+    // 必须先于 Tiptap 执行：它的快捷键表同样挂在编辑器 DOM 的 keydown 上，选区删除（Backspace/Delete）
+    // 会在它的处理器里同步派发事务并阻止默认行为，既不产生 beforeinput、也早于冒泡阶段的监听器。
+    // 冒泡阶段才更新时间戳，update 里看到的就是上一次按键的旧值，选字超过 1.5 秒这次删除就漏记。
+    // 挂 document 捕获而不是编辑器元素：此时编辑器 DOM 尚未挂载（父元素为空），
+    // 而同元素上"捕获先于冒泡"的顺序 WebKit 并不可靠；document 捕获在任何引擎都最先执行。
+    document.addEventListener(
       'keydown',
       editorKeydownHandler as unknown as EventListener,
+      { capture: true },
     )
     editorBeforeInputHandler = (evt: InputEvent) => {
       if (suppressAutoSave.value) return
@@ -2538,6 +2614,7 @@ const chapterContentRefreshHandler = (event: Event) => {
 watch(
   () => props.bookId,
   (bookId) => {
+    pendingPositionHint = true
     if (!bookId) {
       planStore.teardown()
       return
@@ -2685,6 +2762,7 @@ onBeforeUnmount(() => {
   clearEditorStateSyncTimer()
   resetSensitiveState()
   suppressAutoSave.value = false
+  persistWritingPosition()
   editor.value?.destroy()
   planStore.teardown()
 })

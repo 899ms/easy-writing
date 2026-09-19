@@ -99,6 +99,7 @@ const modelProviderIcons: Record<string, string> = {
   gemini_openai: '/provider-icons/gemini.svg',
   claude: '/provider-icons/claude.svg',
   xai: '/provider-icons/xai.svg',
+  local: '/provider-icons/local.svg',
 }
 
 const normalizeModelProvider = (provider?: string, code?: string) => {

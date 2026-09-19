@@ -11,6 +11,7 @@ class="writing-right-panel border-gradient-l"
       <Transition name="panel-switch" mode="out-in">
         <WritingReferencePanelHost
           v-if="activeReferenceToolId"
+          ref="sidePanelHostRef"
           :key="activeReferenceToolId"
           :tool-id="activeReferenceToolId"
           :title="currentPanel.title"
@@ -162,7 +163,8 @@ const activeToolId = computed(() => store.rightPanelActiveTool)
 const activeReferenceToolId = computed(() => isReferencePanelTool(activeToolId.value) ? activeToolId.value : null)
 const poppedToolId = ref<ReferencePanelToolId | null>(null)
 const webPopoutVisible = ref(false)
-const popoutHostRef = ref<{ flushPendingSave?: () => Promise<void> } | null>(null)
+const sidePanelHostRef = ref<{ flushPendingSave?: () => Promise<void | boolean> } | null>(null)
+const popoutHostRef = ref<{ flushPendingSave?: () => Promise<void | boolean> } | null>(null)
 let desktopPanelUnlisteners: Array<() => void> = []
 
 const currentPanel = computed(() => {
@@ -174,7 +176,8 @@ const currentPanel = computed(() => {
 
 const poppedPanelTitle = computed(() => poppedToolId.value ? REFERENCE_PANEL_TITLES[poppedToolId.value] : '')
 
-const selectTool = (tool: Tool) => {
+const selectTool = async (tool: Tool) => {
+  if (activeReferenceToolId.value === 'outline' && await sidePanelHostRef.value?.flushPendingSave?.() === false) return
   if (tool.active) {
     store.setRightPanelActiveTool(null)
   } else {
@@ -188,7 +191,8 @@ const selectTool = (tool: Tool) => {
   }
 }
 
-const closePanel = () => {
+const closePanel = async () => {
+  if (activeReferenceToolId.value === 'outline' && await sidePanelHostRef.value?.flushPendingSave?.() === false) return
   store.setRightPanelActiveTool(null)
 }
 
@@ -197,14 +201,14 @@ const handleLoreUpdated = () => {
 }
 
 const closeWebPopout = async () => {
-  await popoutHostRef.value?.flushPendingSave?.()
+  if (await popoutHostRef.value?.flushPendingSave?.() === false) return
   webPopoutVisible.value = false
   poppedToolId.value = null
 }
 
 const dockWebPopout = async () => {
   const toolId = poppedToolId.value
-  await popoutHostRef.value?.flushPendingSave?.()
+  if (await popoutHostRef.value?.flushPendingSave?.() === false) return
   webPopoutVisible.value = false
   poppedToolId.value = null
   if (toolId) {

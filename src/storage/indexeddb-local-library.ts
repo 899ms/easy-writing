@@ -5,9 +5,11 @@ import type {
   LocalBookGroup,
   LocalBookListQuery,
   LocalChapter,
+  LocalLibraryDump,
   LocalLibraryStorage,
   LocalVolume,
   RemoteCatalogVolumeInput,
+  UpdateLocalBookOptions
 } from './local-library-types'
 import {
   buildLocalTree,
@@ -113,6 +115,27 @@ export class IndexedDbLocalLibraryStorage implements LocalLibraryStorage {
   private async get<T>(name: StoreName, id: number | string) {
     const { objectStore } = await this.store(name, 'readonly')
     return await requestToPromise<T | undefined>(objectStore.get(Number(id))) ?? null
+  }
+
+  async exportAllRecords() {
+    return {
+      groups: await this.all<LocalBookGroup>(STORE_GROUPS),
+      books: await this.all<LocalBook>(STORE_BOOKS),
+      volumes: await this.all<LocalVolume>(STORE_VOLUMES),
+      chapters: await this.all<LocalChapter>(STORE_CHAPTERS),
+    }
+  }
+
+  async importAllRecords(dump: LocalLibraryDump, options: { replace: boolean }) {
+    const db = await this.getDb()
+    const stores: StoreName[] = [STORE_GROUPS, STORE_BOOKS, STORE_VOLUMES, STORE_CHAPTERS]
+    const transaction = db.transaction(stores, 'readwrite')
+    if (options.replace) stores.forEach(name => transaction.objectStore(name).clear())
+    dump.groups.forEach(group => transaction.objectStore(STORE_GROUPS).put(normalizeLocalGroup(group)))
+    dump.books.forEach(book => transaction.objectStore(STORE_BOOKS).put(normalizeLocalBook(book)))
+    dump.volumes.forEach(volume => transaction.objectStore(STORE_VOLUMES).put(normalizeLocalVolume(volume)))
+    dump.chapters.forEach(chapter => transaction.objectStore(STORE_CHAPTERS).put(normalizeLocalChapter(chapter)))
+    await transactionDone(transaction)
   }
 
   private async listBookVolumes(bookId: number | string) {
@@ -234,9 +257,13 @@ export class IndexedDbLocalLibraryStorage implements LocalLibraryStorage {
     await this.refreshBookStats(bookId)
   }
 
-  async updateLocalBook(payload: Partial<LocalBook> & { id: number }) {
+  async updateLocalBook(payload: Partial<LocalBook> & { id: number }, options?: UpdateLocalBookOptions) {
     const current = await this.getLocalBookDetail(payload.id)
-    const next = normalizeLocalBook({ ...(current || {}), ...payload, updateTime: nowIso() })
+    const next = normalizeLocalBook({
+      ...(current || {}),
+      ...payload,
+      updateTime: options?.keepUpdateTime && current?.updateTime ? current.updateTime : nowIso(),
+    })
     await this.put(STORE_BOOKS, next)
     return next
   }

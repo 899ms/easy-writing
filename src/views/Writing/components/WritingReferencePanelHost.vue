@@ -75,7 +75,7 @@ import {
 } from './reference-panel'
 
 interface PanelExpose {
-  flushPendingSave?: () => Promise<void>
+  flushPendingSave?: () => Promise<void | boolean>
 }
 
 const props = defineProps<{
@@ -97,7 +97,7 @@ const panelRef = ref<PanelExpose | null>(null)
 const panelMode = computed(() => props.panelMode || 'side')
 
 const flushPendingSave = async () => {
-  await panelRef.value?.flushPendingSave?.()
+  return await panelRef.value?.flushPendingSave?.()
 }
 
 defineExpose({

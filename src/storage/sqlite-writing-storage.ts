@@ -14,6 +14,7 @@ import {
   sleep,
   SQLITE_OPEN_RETRY_DELAYS,
   type LocalChapterDraft,
+  type WritingStorageDump,
   type LocalWritingSettings,
   type StoredChapterVersion,
   type StoredLocalChapterDraft,
@@ -423,6 +424,48 @@ export class SqliteWritingStorage implements WritingStorage {
       lastBackedUpAt: Number(backupAt || Date.now()),
     }
     await this.upsertChapterRow(db, { ...nextChapter, storageKey: current.storageKey })
+  }
+
+  async exportAllRecords(): Promise<WritingStorageDump> {
+    const db = await this.getDb()
+    const chapterRows = await db.select<SqlRow>('SELECT payload FROM chapter_contents')
+    const versionRows = await db.select<SqlRow>('SELECT payload FROM chapter_versions')
+    const settingRows = await db.select<SqlRow>('SELECT key, value FROM sync_settings')
+    return {
+      chapters: chapterRows
+        .map(row => safeJsonParse<StoredLocalChapterDraft | null>(row.payload, null))
+        .filter((item): item is StoredLocalChapterDraft => Boolean(item)),
+      versions: versionRows
+        .map(row => safeJsonParse<StoredChapterVersion | null>(row.payload, null))
+        .filter((item): item is StoredChapterVersion => Boolean(item)),
+      settings: settingRows.map(row => ({ key: String(row.key), value: String(row.value ?? '') })),
+    }
+  }
+
+  async importAllRecords(dump: WritingStorageDump, options: { replace: boolean }) {
+    const db = await this.getDb()
+    if (options.replace) {
+      for (const table of ['chapter_contents', 'chapter_versions', 'sync_settings']) {
+        await db.execute(`DELETE FROM ${table}`)
+      }
+    }
+    for (const chapter of dump.chapters) {
+      const normalized = normalizeLocalChapterDraft(chapter)
+      await this.upsertChapterRow(db, {
+        ...normalized,
+        storageKey: buildChapterStorageKey(normalized.userId, normalized.bookId, normalized.chapterId),
+        lastBackedUpAt: Number(chapter.lastBackedUpAt || 0),
+      })
+    }
+    for (const version of dump.versions) {
+      await db.execute(
+        'INSERT OR REPLACE INTO chapter_versions (id, payload, chapterId, createdAt) VALUES ($1, $2, $3, $4)',
+        [version.id, JSON.stringify(version), Number(version.chapterId), Number(version.createdAt || Date.now())]
+      )
+    }
+    for (const item of dump.settings) {
+      await db.execute('INSERT OR REPLACE INTO sync_settings (key, value) VALUES ($1, $2)', [item.key, item.value])
+    }
   }
 
   async getLocalWritingSettings() {

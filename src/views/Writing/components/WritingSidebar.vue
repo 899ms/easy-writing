@@ -46,7 +46,7 @@ v-if="!isCatalogStructureLocked" class="fa-solid fa-arrow-down-short-wide action
       </div>
 
       <!-- 目录列表 -->
-      <div class="catalog-list" @dragover.prevent>
+      <div ref="catalogListRef" class="catalog-list" @dragover.prevent>
         <!-- 目录拉取期间用骨架占位：空白目录配上编辑区那句「请选择左侧章节」，
              看着像这本书是空的，而不是还没加载完。 -->
         <div v-if="catalogLoading && !catalogItems.length" class="catalog-skeleton" aria-label="目录加载中">
@@ -88,7 +88,7 @@ class="fa-solid fa-ellipsis action-btn" title="更多"
           <!-- 章节列表 -->
           <div v-if="volume.open" class="chapter-list">
             <div
-v-for="(chapter, cIndex) in volume.children" :key="chapter.id" class="catalog-item" :class="{
+v-for="(chapter, cIndex) in volume.children" :key="chapter.id" :data-chapter-id="chapter.id" class="catalog-item" :class="{
               'nav-item-active': activeId === chapter.id && activeType === 'chapter',
               'force-hover': chapterContextMenu.visible && chapterContextMenu.chapter?.id === chapter.id,
               'is-planned': chapter.isPlanned || chapter.selectable === false
@@ -256,6 +256,7 @@ import { ElMessage } from 'element-plus'
 import { inkConfirm } from '@/utils/ink-confirm'
 import { isTauriRuntime } from '@/storage'
 import { getLocalLibraryStorage } from '@/storage/local-library'
+import { readUiPreferences } from '@/stores/ui-preferences'
 
 const route = useRoute()
 const wordCounter = useWordCount()
@@ -1057,6 +1058,57 @@ const pickFirstChapter = () => {
   return null
 }
 
+const catalogListRef = ref<HTMLElement | null>(null)
+const scrollCatalogToChapter = (chapterId: number) => {
+  const el = catalogListRef.value?.querySelector<HTMLElement>(`[data-chapter-id="${chapterId}"]`)
+  el?.scrollIntoView({ block: 'center' })
+}
+
+/**
+ * 进入作品时优先打开上次编辑的章节（记在书记录 lastChapterId 里），并把目录滚到该章。
+ * 已经有活动章（切章刷新目录）、工作流任务入口（任务指定章节优先）、用户关掉了这个开关，都不介入。
+ */
+const applyRememberedChapter = async (loadRevision: number) => {
+  if (findChapterInCatalog(editorStore.activeChapterId)) return
+  if (route.query.from === 'workflow') return
+  if (!readUiPreferences().restoreWritingPosition) return
+  let lastChapterId = 0
+  try {
+    const book = await localLibrary.getLocalBookDetail(Number(bookId.value))
+    lastChapterId = Number(book?.lastChapterId || 0)
+  } catch (error) {
+    console.warn('读取上次编辑章节失败', error)
+    return
+  }
+  if (loadRevision !== catalogLoadRevision || !lastChapterId) return
+  const target = findChapterInCatalog(lastChapterId)
+  // 章节已删除或只是工作流占位章：退回默认的第一章
+  if (!target || isVirtualWorkflowChapter(target)) return
+  const volume = catalogItems.value.find(item => item.children.includes(target))
+  if (volume) volume.open = true
+  activeId.value = target.id
+  activeType.value = 'chapter'
+  editorStore.setActiveChapter({ id: target.id, title: formatChapterDisplayTitle(target), summary: target.summary })
+  await nextTick()
+  scrollCatalogToChapter(target.id)
+}
+
+/** 把当前活动章写进书记录，作为下次进入作品的落点；不更新书的修改时间 */
+let lastRecordedChapterKey = ''
+const recordLastChapter = (chapterId: number | null | undefined) => {
+  const id = Number(chapterId || 0)
+  if (!id || !bookId.value) return
+  const key = `${bookId.value}:${id}`
+  if (key === lastRecordedChapterKey) return
+  const chapter = findChapterInCatalog(id)
+  if (!chapter || isVirtualWorkflowChapter(chapter)) return
+  lastRecordedChapterKey = key
+  localLibrary
+    .updateLocalBook({ id: Number(bookId.value), lastChapterId: id }, { keepUpdateTime: true })
+    .catch(error => console.warn('记录上次编辑章节失败', error))
+}
+watch(() => editorStore.activeChapterId, chapterId => recordLastChapter(chapterId))
+
 const ensureActiveChapter = () => {
   let target = findChapterInCatalog(editorStore.activeChapterId)
   if (!target) {
@@ -1094,7 +1146,10 @@ const loadCatalogTree = async () => {
       if (!Array.isArray(vol.children)) vol.children = []
     })
     catalogItems.value = volumeList
+    await applyRememberedChapter(loadRevision)
+    if (loadRevision !== catalogLoadRevision) return
     ensureActiveChapter()
+    recordLastChapter(editorStore.activeChapterId)
   } catch (error) {
     if (loadRevision !== catalogLoadRevision) return
     console.error('加载目录树失败:', error)

@@ -1102,6 +1102,48 @@ onBeforeUnmount(() => {
         line-height: 1.7;
         color: var(--ink-main);
         word-break: break-word;
+        overflow-wrap: anywhere;
+
+        // 全局 * { padding: 0 } 清掉了列表默认缩进，序号会画到气泡外面，这里补回来。
+        // v-html 注入的节点没有 scoped 属性，必须用 :deep() 才能命中
+        :deep(ol),
+        :deep(ul) {
+          padding-left: 1.6em;
+          margin: 4px 0;
+        }
+
+        :deep(li + li) {
+          margin-top: 2px;
+        }
+
+        :deep(p + p),
+        :deep(p + ol),
+        :deep(p + ul),
+        :deep(ol + p),
+        :deep(ul + p) {
+          margin-top: 6px;
+        }
+
+        :deep(pre) {
+          max-width: 100%;
+          white-space: pre-wrap;
+          word-break: break-all;
+          overflow-x: auto;
+        }
+
+        :deep(code) {
+          word-break: break-all;
+        }
+
+        :deep(table) {
+          display: block;
+          max-width: 100%;
+          overflow-x: auto;
+        }
+
+        :deep(img) {
+          max-width: 100%;
+        }
       }
 
       .typing {

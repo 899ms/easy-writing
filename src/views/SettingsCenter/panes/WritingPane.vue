@@ -74,6 +74,10 @@
                   <span><strong>快捷润色工具条</strong><small>选中正文后显示 AI 润色浮动工具条</small></span>
                   <el-switch v-model="editorDraft.quickPolishToolbarEnabled" />
                 </label>
+                <label class="switch-row compact">
+                  <span><strong>回到上次编辑位置</strong><small>进入作品时自动打开上次编辑的章节，并恢复光标与滚动位置</small></span>
+                  <el-switch v-model="uiDraft.restoreWritingPosition" />
+                </label>
               </section>
               <section class="settings-card">
                 <div class="settings-card-title"><i class="fa-solid fa-align-left"></i><strong>字数统计</strong></div>

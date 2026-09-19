@@ -3,7 +3,10 @@
  * 改配色只动本文件与 editor-tokens.scss，业务样式一律引用变量。
  */
 
-:where(.theme-new, .theme-yellow, .theme-green, .theme-dark) {
+/* 必须压过 element-plus 写在 :root 上的编译期默认值（优先级 0,1,0）：
+ * :where() 优先级为 0 会输给它，下面这些 --el-* 映射就全部失效，
+ * 表现为暗夜主题下 Element 组件仍是白底灰字、主色仍是编译期的固定墨黑 */
+:root:is(.theme-new, .theme-yellow, .theme-green, .theme-dark) {
   --settings-section-bg: var(--card-bg);
   --settings-section-border: var(--ui-border);
   --settings-control-bg: var(--input-bg);
@@ -730,6 +733,11 @@
   .ink-bg-image {
     opacity: 0.2;
     filter: grayscale(100%) brightness(60%) contrast(130%);
+  }
+
+  /* OpenAI 标是纯黑单色图（img 加载，currentColor 退化成黑），暗夜下反成浅色；其它主题保持原黑色 */
+  img[src$="/provider-icons/openai.svg"] {
+    filter: invert(0.92);
   }
 
   .paper-texture {

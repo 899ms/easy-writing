@@ -4,6 +4,11 @@ import type { BookReferenceExport } from './local-reference-transfer'
 
 export type LocalMergeStatus = 'local' | 'merged' | 'ignored'
 
+/** keepUpdateTime：只记位置这类不算"修改作品"的写入，不要把书顶到最近更新 */
+export interface UpdateLocalBookOptions {
+  keepUpdateTime?: boolean
+}
+
 export interface LocalBook extends Book {
   localOnly: true
   groupId?: string | null
@@ -14,6 +19,8 @@ export interface LocalBook extends Book {
   deletedAt?: string | null
   // 归属账号：'guest'=未登录创建；数字串=所属云端账号 uid；null=存量数据（归属未知，仅展示）
   ownerUserId?: string | null
+  /** 上次编辑的章节，进入作品时优先打开；随书记录一起备份 */
+  lastChapterId?: number | null
 }
 
 export interface LocalBookGroup extends BookGroup {
@@ -146,12 +153,24 @@ export interface RemoteCatalogVolumeInput {
   }>
 }
 
+/** 一键备份用的作品库全量快照：四张表原样导出，含已删除记录 */
+export interface LocalLibraryDump {
+  groups: LocalBookGroup[]
+  books: LocalBook[]
+  volumes: LocalVolume[]
+  chapters: LocalChapter[]
+}
+
 export interface LocalLibraryStorage {
+  /** 一键备份：四张表原样导出 */
+  exportAllRecords(): Promise<LocalLibraryDump>
+  /** 一键恢复：replace=先清空再写入（覆盖模式）；否则按 id 逐条写入（合并模式，id 已由调用方重映射） */
+  importAllRecords(dump: LocalLibraryDump, options: { replace: boolean }): Promise<void>
   listLocalBooks(query?: LocalBookListQuery): Promise<LocalBook[]>
   createLocalBook(payload: Partial<LocalBook>): Promise<LocalBook>
   // 用云端 id 直接落库整本目录（book+卷+章），标记为已合并；供离线回退渲染。
   importRemoteCatalog(book: Partial<LocalBook>, volumes: RemoteCatalogVolumeInput[]): Promise<void>
-  updateLocalBook(payload: Partial<LocalBook> & { id: number }): Promise<LocalBook>
+  updateLocalBook(payload: Partial<LocalBook> & { id: number }, options?: UpdateLocalBookOptions): Promise<LocalBook>
   softDeleteLocalBook(ids: number[]): Promise<void>
   restoreLocalBook(ids: number[]): Promise<void>
   /** 彻底删除：书+卷+章行硬删。正文/版本/参考等级联由 purgeLocalBookCompletely 编排 */

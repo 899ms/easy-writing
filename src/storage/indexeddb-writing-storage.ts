@@ -15,6 +15,7 @@ import {
   type StoredChapterVersion,
   type StoredLocalChapterDraft,
   type WritingStorage,
+  type WritingStorageDump,
 } from './writing-storage'
 
 const DB_NAME = 'ew-writing-local'
@@ -273,6 +274,51 @@ export class IndexedDbWritingStorage implements WritingStorage {
       lastBackedUpAt: Number(backupAt || Date.now()),
     })
     await transactionDone(transaction)
+  }
+
+  async exportAllRecords(): Promise<WritingStorageDump> {
+    const chapters = await this.getAllFrom<StoredLocalChapterDraft>(STORE_CHAPTERS)
+    const versions = await this.getAllFrom<StoredChapterVersion>(STORE_VERSIONS)
+    const settings = await this.getAllFrom<{ key: string; value: unknown }>(STORE_SETTINGS)
+    // IndexedDB 里 value 存的是对象，导出统一成 JSON 文本，与 SQLite 口径一致
+    return {
+      chapters,
+      versions,
+      settings: settings.map(item => ({ key: String(item.key), value: JSON.stringify(item.value ?? null) })),
+    }
+  }
+
+  async importAllRecords(dump: WritingStorageDump, options: { replace: boolean }) {
+    const db = await this.getDb()
+    const stores: StoreName[] = [STORE_CHAPTERS, STORE_VERSIONS, STORE_SETTINGS]
+    const transaction = db.transaction(stores, 'readwrite')
+    if (options.replace) stores.forEach(name => transaction.objectStore(name).clear())
+    for (const chapter of dump.chapters) {
+      const normalized = normalizeLocalChapterDraft(chapter)
+      transaction.objectStore(STORE_CHAPTERS).put({
+        ...normalized,
+        storageKey: buildChapterStorageKey(normalized.userId, normalized.bookId, normalized.chapterId),
+        lastBackedUpAt: Number(chapter.lastBackedUpAt || 0),
+        wordCount: countDraftWords(normalized.textContent),
+        textWordCount: countTextWords(normalized.textContent),
+      })
+    }
+    dump.versions.forEach(version => transaction.objectStore(STORE_VERSIONS).put(version))
+    for (const item of dump.settings) {
+      let value: unknown = null
+      try {
+        value = JSON.parse(item.value)
+      } catch {
+        value = item.value
+      }
+      transaction.objectStore(STORE_SETTINGS).put({ key: item.key, value })
+    }
+    await transactionDone(transaction)
+  }
+
+  private async getAllFrom<T>(name: StoreName) {
+    const { objectStore } = await this.store(name, 'readonly')
+    return await requestToPromise<T[]>(objectStore.getAll())
   }
 
   async getLocalWritingSettings() {

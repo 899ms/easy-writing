@@ -55,3 +55,20 @@ export async function saveImportedFont(font: ImportedFont, data: ArrayBuffer): P
     db.close()
   }
 }
+
+/** 一键恢复（覆盖模式）用：清空全部已导入字体 */
+export async function clearImportedFonts(): Promise<void> {
+  const db = await openDb()
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction([METADATA, FILES], 'readwrite')
+      tx.oncomplete = () => resolve()
+      tx.onabort = () => reject(tx.error || new Error('清空字体失败'))
+      tx.onerror = () => reject(tx.error || new Error('清空字体失败'))
+      tx.objectStore(METADATA).clear()
+      tx.objectStore(FILES).clear()
+    })
+  } finally {
+    db.close()
+  }
+}
